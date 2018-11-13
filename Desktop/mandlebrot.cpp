@@ -5,11 +5,11 @@
 using namespace std;
 
 const int width = 800;
-const int height = 600;
+const int height = 800;
 float MinRe = -2.0;
-float MaxRe = 1.0;
-float MinIm = -1.2;
-float MaxIm = MinIm+(MaxRe-MinRe)*height/width;
+float MaxRe = 1;
+float MinIm = -1;
+float MaxIm = 1;
 
 int mandlebrot( int x, int y, int m);
 
@@ -46,7 +46,10 @@ int main(int argc, char *argv[])
 
 int mandlebrot( int x, int y, int max_it )
 {
-    complex<float> point( (float)x/width-1.5, (float)y/height-0.5 );
+    complex<float> point(
+                        x*( (MaxRe-MinRe)/width ) + MinRe ,
+                        y*( (MaxIm-MinIm)/height ) + MinIm );
+                        
     complex<float> z(0,0);
     int iterations = 0;
     while( abs(z) < 2 && iterations < max_it ) {
