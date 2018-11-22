@@ -7,8 +7,8 @@
 using namespace std;
 
 
-const int width = 300;
-const int height = 300;
+const int width = 500;
+const int height = 500;
 
 const float MinRe = -2.0;
 const float MaxRe = 1;
@@ -16,16 +16,6 @@ const float MinIm = -1;
 const float MaxIm = 1;
 
 unsigned char mandlebrot( int x, int y, int m);
-
-struct pixelInfo
-{
-    int x;
-    int y;
-    unsigned char val;
-
-    pixelInfo( int xpos, int ypos, unsigned char pval) : x(xpos), y(ypos), val(pval) { }
-    pixelInfo() {x = 0; y = 0; val = 0;}
-};
 
 
 int main(int argc, char *argv[]) {
@@ -42,16 +32,6 @@ int main(int argc, char *argv[]) {
 
     //var to hold mpi receive status
     MPI_Status status;
-
-
-    //creates custom MPI struct to pass
-    MPI_Datatype pixelInfoMPI;
-    MPI_Datatype type[3] = { MPI_INT, MPI_INT, MPI::UNSIGNED_CHAR };
-    int blocklen[3] = { 1, 1, 1 };
-    MPI_Aint disp[3] = { 0, 4, 8};
-    
-    MPI_Type_create_struct(3, blocklen, disp, type, &pixelInfoMPI);
-    MPI_Type_commit(&pixelInfoMPI);
 
     // Get the number of processes
     int world_size;
@@ -93,62 +73,66 @@ int main(int argc, char *argv[]) {
     if( rank == 0 )
     {
         bitmap_image img( width, height );
-        vector<pixelInfo> receive_buffer;
+        vector<unsigned char> receive_buffer;
 
         if( world_size >= 2)
         {
-            int image_portion = node01_end * height;
             receive_buffer.resize(node01_end * height);
-            cout<< "Made it that far w2? (o.o)" <<endl;
 
-            MPI_Recv(&receive_buffer[0], node01_end * height, pixelInfoMPI, 1, 0, MPI_COMM_WORLD, &status);
+            MPI_Recv(&receive_buffer[0], node01_end * height, MPI::UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &status);
 
-            for( int i = 0; i < image_portion ; i++)
+            for( int i = 0; i < node01_end; i++)
+            {
+                for( int j = 0; j < height; j++)
                 {
-                    img.set_pixel(receive_buffer.front().x, receive_buffer.front().y, receive_buffer.front().val, 0, 0);
+                    img.set_pixel(i, j, receive_buffer.front(), 0, 0);
                     receive_buffer.erase(receive_buffer.begin());
-                    if( i % 1000 == 0)
-                        cout<< i <<"/"<<image_portion<<endl;
                 }
+                if( i % 1000 == 0)
+                    cout<< i <<"/"<< (node01_end * height) <<endl;
+            }
         }
         
 
         if( world_size >= 3)
         {
             receive_buffer.resize(( node02_end - node01_end) * height);
-            MPI_Recv(&receive_buffer[0], ( node02_end - node01_end) * height, pixelInfoMPI, 2, 1, MPI_COMM_WORLD, &status);
+            MPI_Recv(&receive_buffer[0], ( node02_end - node01_end) * height, MPI::UNSIGNED_CHAR, 2, 1, MPI_COMM_WORLD, &status);
 
-            for( int i = node01_end; i < (( node02_end - node01_end) * height); i++)
+            for( int i = node01_end; i < node02_end ; i++)
+            {
+                for( int j = 0; j < height; j++)
                 {
-                    img.set_pixel(receive_buffer.front().x, receive_buffer.front().y, receive_buffer.front().val, 0, 0);
+                    img.set_pixel(i, j, receive_buffer.front(), 0, 0);
                     receive_buffer.erase(receive_buffer.begin());
-                    if( i % 1000 == 0)
-                        cout << i << "/" << ( node02_end - node01_end) * height <<endl;
                 }
+            }
         }
 
         if( world_size == 4)
         {
             receive_buffer.resize(( width - node02_end) * height);
-            MPI_Recv(&receive_buffer[0], ( width - node02_end) * height, pixelInfoMPI, 3, 2, MPI_COMM_WORLD, &status);
+            MPI_Recv(&receive_buffer[0], ( width - node02_end) * height, MPI::UNSIGNED_CHAR, 3, 2, MPI_COMM_WORLD, &status);
 
-            for( int i = node02_end; i < (( width - node02_end) * height); i++)
+            for( int i = node02_end; i < width ; i++)
+            {
+                for( int j = 0; j < height; j++)
                 {
-                    img.set_pixel(receive_buffer.front().x, receive_buffer.front().y, receive_buffer.front().val, 0, 0);
+                    img.set_pixel(i, j, receive_buffer.front(), 0, 0);
                     receive_buffer.erase(receive_buffer.begin());
                 }
+            }
         }
 
-        cout<< "Almost made it?" <<endl;
         img.save_image("frac.bmp");
-        cout<< "Made it this far img save? (o.o)" <<endl;
+        cout<< "Image saved" <<endl;
     }
 
     //instructions for node01
     if( rank == 1)
     {
-        vector<pixelInfo> buf;
-        buf.reserve(node01_end * height);
+        vector<unsigned char> buf;
+        buf.resize(node01_end * height);
         omp_set_dynamic(0); //allows exact setting of number of threads rather than max threads
         omp_set_num_threads(4); //sets exact num threads to thread per node argument
 
@@ -160,18 +144,18 @@ int main(int argc, char *argv[]) {
         {
             for( int j = 0; j < height; j++ )
             {
-                buf.push_back( pixelInfo( i, j, mandlebrot( i, j, max_it) ) );
+                buf[(i*width)+j]=( mandlebrot( i, j, max_it) );
             }
         }
 
-        MPI_Send(&buf[0], buf.size(), pixelInfoMPI, 0, 0, MPI_COMM_WORLD);
+        MPI_Send(&buf[0], buf.size(), MPI::UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
     }
 
     //instructions for node02
     if( rank == 2)
     {
-        vector<pixelInfo> buf;
-        buf.reserve(( node02_end - node01_end) * height);
+        vector<unsigned char> buf;
+        buf.resize(( node02_end - node01_end) * height);
         omp_set_dynamic(0); //allows exact setting of number of threads rather than max threads
         omp_set_num_threads(4); //sets exact num threads to thread per node argument
         #pragma omp parallel \
@@ -182,17 +166,17 @@ int main(int argc, char *argv[]) {
         {
             for( int j = 0; j < height; j++ )
             {
-                buf.push_back( pixelInfo( i, j, mandlebrot( i, j, max_it) ) );
+                buf[((i*width)+j) - node01_end]=( mandlebrot( i, j, max_it) );
             }
         }
-        MPI_Send(&buf[0], ( node02_end - node01_end) * height, pixelInfoMPI, 0, 1, MPI_COMM_WORLD);
+        MPI_Send(&buf[0], ( node02_end - node01_end) * height, MPI::UNSIGNED_CHAR, 0, 1, MPI_COMM_WORLD);
     }
 
     //instructions for node03
     if( rank == 3)
     {
-        vector<pixelInfo> buf;
-        buf.reserve(( width - node02_end) * height);
+        vector<unsigned char> buf;
+        buf.resize(( width - node02_end) * height);
         omp_set_dynamic(0); //allows exact setting of number of threads rather than max threads
         omp_set_num_threads(4); //sets exact num threads to thread per node argument
         #pragma omp parallel \
@@ -203,10 +187,10 @@ int main(int argc, char *argv[]) {
         {
             for( int j = 0; j < height; j++ )
             {
-                buf.push_back( pixelInfo( i, j, mandlebrot( i, j, max_it) ) );
+                buf[((i*width)+j) - node02_end]=( mandlebrot( i, j, max_it) );
             }
         }
-        MPI_Send(&buf[0], ( width - node02_end) * height, pixelInfoMPI, 0, 2, MPI_COMM_WORLD);
+        MPI_Send(&buf[0], ( width - node02_end) * height, MPI::UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD);
     }
     // Finalize the MPI environment.
     
