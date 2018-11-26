@@ -3,29 +3,37 @@
 #include <complex.h>
 #include <omp.h>
 #include <string.h>
+#include <ctime>
 #include "bitmap_image.hpp"
 using namespace std;
 
 
-const int width = 500;
-const int height = 500;
 
 const float MinRe = -2.0;
 const float MaxRe = 1;
 const float MinIm = -1;
 const float MaxIm = 1;
 
-unsigned char mandlebrot( int x, int y, int m);
+unsigned char mandlebrot( int x, int y, int m, int d);
 
 
 int main(int argc, char *argv[]) {
     
-    // if( argc != 2)
-    // {
-    //     cout<< argc <<endl;
-    //     cout<< "Pass max iterations (int) as argument" <<endl;
-    //     return -1;
-    // }
+    //verifies correct number of arguments are passed
+    if( argc != 4) 
+    {
+        cout<< argc <<endl;
+        cout<< "Pass as arguments: max iterations (int), threads per node (int), image square dimension (int) " <<endl;
+        return -1;
+    }
+
+    cout<< "Work started" <<endl;
+
+    //converts arguments to integers for use
+    int max_it = atoi( argv[1] );
+    int threads_per_node = atoi( argv[2] );
+    int width = atoi( argv[3] );
+    int height = atoi( argv[3] );
 
     // Initialize the MPI environment
     MPI_Init(NULL, NULL);
@@ -46,12 +54,8 @@ int main(int argc, char *argv[]) {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    //int max_it =  atoi(argv[1]);
-    int max_it = 30;
-
     int node01_end;
     int node02_end;
-
     switch( world_size ) //Partitions work for each worker node
     {
         case 2:
@@ -69,9 +73,12 @@ int main(int argc, char *argv[]) {
         break;
     }
 
+    clock_t start_time = clock();
+
     //instructions for master
     if( rank == 0 )
     {
+        cout<< "Rank 0 work started" <<endl;
         bitmap_image img( width, height );
         vector<unsigned char> receive_buffer;
 
@@ -124,17 +131,25 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        clock_t end_time = clock();
+        double time_elapsed = double( end_time - start_time ) / CLOCKS_PER_SEC;
         img.save_image("frac.bmp");
         cout<< "Image saved" <<endl;
+
+        ofstream records;
+
+        records.open( "test_recordings.csv", ios::app);
+        records << world_size << "," << threads_per_node << "," << max_it << "," << width << "," << time_elapsed << "\n";
     }
 
     //instructions for node01
     if( rank == 1)
     {
+        cout<< "Rank 1 work started" <<endl;
         vector<unsigned char> buf;
         buf.resize(node01_end * height);
         omp_set_dynamic(0); //allows exact setting of number of threads rather than max threads
-        omp_set_num_threads(4); //sets exact num threads to thread per node argument
+        omp_set_num_threads(threads_per_node); //sets exact num threads to thread per node argument
 
         #pragma omp parallel \
         shared (buf) \
@@ -144,7 +159,7 @@ int main(int argc, char *argv[]) {
         {
             for( int j = 0; j < height; j++ )
             {
-                buf[(i*width)+j]=( mandlebrot( i, j, max_it) );
+                buf[(i*width)+j]=( mandlebrot( i, j, max_it, width) );
             }
         }
 
@@ -154,19 +169,20 @@ int main(int argc, char *argv[]) {
     //instructions for node02
     if( rank == 2)
     {
+        cout<< "Rank 2 work started" <<endl;
         vector<unsigned char> buf;
         buf.resize(( node02_end - node01_end) * height);
         omp_set_dynamic(0); //allows exact setting of number of threads rather than max threads
-        omp_set_num_threads(4); //sets exact num threads to thread per node argument
+        omp_set_num_threads(threads_per_node); //sets exact num threads to thread per node argument
         #pragma omp parallel \
-        shared (buf, max_it) \
+        shared (buf) \
 
         #pragma omp for
         for( int i = node01_end; i < node02_end ; i++)
         {
             for( int j = 0; j < height; j++ )
             {
-                buf[((i*width)+j) - node01_end]=( mandlebrot( i, j, max_it) );
+                buf[((i - node01_end)*width)+j]=( mandlebrot( i, j, max_it, width) );
             }
         }
         MPI_Send(&buf[0], ( node02_end - node01_end) * height, MPI::UNSIGNED_CHAR, 0, 1, MPI_COMM_WORLD);
@@ -175,19 +191,20 @@ int main(int argc, char *argv[]) {
     //instructions for node03
     if( rank == 3)
     {
+        cout<< "Rank 3 work started" <<endl;
         vector<unsigned char> buf;
         buf.resize(( width - node02_end) * height);
         omp_set_dynamic(0); //allows exact setting of number of threads rather than max threads
-        omp_set_num_threads(4); //sets exact num threads to thread per node argument
+        omp_set_num_threads(threads_per_node); //sets exact num threads to thread per node argument
         #pragma omp parallel \
-        shared (buf, max_it) \
+        shared (buf) \
 
         #pragma omp for
         for( int i = node02_end; i < width ; i++)
         {
             for( int j = 0; j < height; j++ )
             {
-                buf[((i*width)+j) - node02_end]=( mandlebrot( i, j, max_it) );
+                buf[((i - node02_end)*width)+j]=( mandlebrot( i, j, max_it, width) );
             }
         }
         MPI_Send(&buf[0], ( width - node02_end) * height, MPI::UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD);
@@ -198,11 +215,11 @@ int main(int argc, char *argv[]) {
     MPI_Finalize();
 }
 
-unsigned char mandlebrot( int x, int y, int max_it )
+unsigned char mandlebrot( int x, int y, int max_it, int square_dim )
 {
     complex<float> point(
-                        x*( (MaxRe-MinRe)/width ) + MinRe ,
-                        y*( (MaxIm-MinIm)/height ) + MinIm );
+                        x*( (MaxRe-MinRe)/square_dim ) + MinRe ,
+                        y*( (MaxIm-MinIm)/square_dim ) + MinIm );
                         
     complex<float> z(0,0);
     int iterations = 0;
